@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from sign_vision.gesture_engine import (
+from sign_vision.gestures import (
     GestureArbiter,
     GestureName,
     GestureState,

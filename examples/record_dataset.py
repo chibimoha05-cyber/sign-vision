@@ -40,9 +40,9 @@ import numpy as np
 # Ensure src/ is on sys.path
 sys.path.insert(0, os.path.join(_project_root, "src"))
 
-from sign_vision.camera import ThreadedCamera
-from sign_vision.contracts import FrameTrackingResult
-from sign_vision.tracker import SignHandTracker
+from sign_vision.capture import ThreadedCamera
+from sign_vision.schema import FrameTrackingResult
+from sign_vision.engine import SignHandTracker
 
 
 def build_csv_header() -> list[str]:

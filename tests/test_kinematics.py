@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sign_vision.contracts import (
+from sign_vision.schema import (
     FEATURE_DIM_V1,
     FEATURE_DIM_V2,
     LANDMARK_COUNT,
@@ -43,7 +43,7 @@ from sign_vision.kinematics import (
     WRIST,
     HandKinematicsEngine,
 )
-from sign_vision.normalizer import OneEuroFilter, normalize_landmarks
+from sign_vision.transforms import OneEuroFilter, normalize_landmarks
 
 
 def create_canonical_hand() -> np.ndarray:

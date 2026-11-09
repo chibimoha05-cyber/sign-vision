@@ -19,8 +19,8 @@ import pytest
 # Ensure src/ is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from sign_vision.contracts import TOTAL_FEATURE_DIM, FrameTrackingResult
-from sign_vision.tracker import SignHandTracker
+from sign_vision.schema import TOTAL_FEATURE_DIM, FrameTrackingResult
+from sign_vision.engine import SignHandTracker
 
 
 @pytest.fixture
@@ -250,7 +250,7 @@ def test_fast_motion_no_frozen_coasting() -> None:
 
 def test_rtmpose_backend_contract_compliance() -> None:
     """Verifies that RTMPose SimCC backend initializes and produces identical 144-D feature vector contract."""
-    from sign_vision.rtmpose_backend import RTMPoseBackend
+    from sign_vision.backends import RTMPoseBackend
 
     backend = RTMPoseBackend()
     if not backend.is_available:

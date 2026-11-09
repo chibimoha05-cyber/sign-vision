@@ -20,14 +20,14 @@ import pytest
 # Ensure src/ is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from sign_vision.contracts import (
+from sign_vision.schema import (
     LANDMARK_COUNT,
     TOTAL_FEATURE_DIM,
     SingleHandData,
     build_feature_vector,
     build_feature_vector_v1,
 )
-from sign_vision.normalizer import (
+from sign_vision.transforms import (
     HandStabilizer,
     compute_bounding_box,
     normalize_landmarks,
@@ -275,7 +275,7 @@ def test_adaptive_ema_stabilizer(synthetic_hand_skeleton: np.ndarray) -> None:
 
 def test_one_euro_filter_stationary_jitter_suppression(synthetic_hand_skeleton: np.ndarray) -> None:
     """Verifies that OneEuroFilter dampens high-frequency sensor noise on stationary hand."""
-    from sign_vision.normalizer import OneEuroFilter
+    from sign_vision.transforms import OneEuroFilter
 
     filt = OneEuroFilter(min_cutoff=1.2, beta=0.04, d_cutoff=1.0)
     base = synthetic_hand_skeleton.astype(np.float32)
@@ -308,7 +308,7 @@ def test_one_euro_filter_stationary_jitter_suppression(synthetic_hand_skeleton: 
 
 def test_one_euro_filter_fast_movement_responsiveness(synthetic_hand_skeleton: np.ndarray) -> None:
     """Verifies that OneEuroFilter dynamically increases cutoff to avoid lag during fast gestures."""
-    from sign_vision.normalizer import OneEuroFilter
+    from sign_vision.transforms import OneEuroFilter
 
     filt = OneEuroFilter(min_cutoff=1.2, beta=0.04, d_cutoff=1.0)
     base = synthetic_hand_skeleton.astype(np.float32)

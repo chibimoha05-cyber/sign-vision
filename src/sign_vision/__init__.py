@@ -5,7 +5,7 @@ applying wrist-centered translation and scale normalization with adaptive EMA sm
 and outputting strict, deterministic 128-float feature vectors for ML training and real-time inference.
 """
 
-from sign_vision.contracts import (
+from sign_vision.schema import (
     COORDINATES_PER_LANDMARK,
     FEATURE_DIM_V1,
     FEATURE_DIM_V2,
@@ -17,27 +17,27 @@ from sign_vision.contracts import (
     build_feature_vector,
     build_feature_vector_v1,
 )
-from sign_vision.camera import ThreadedCamera
+from sign_vision.capture import ThreadedCamera
 from sign_vision.kinematics import (
     FINGER_NAMES,
     HandKinematicsEngine,
     KinematicFeatures,
 )
-from sign_vision.gesture_engine import (
+from sign_vision.gestures import (
     GestureArbiter,
     GestureCandidate,
     GestureName,
     GestureState,
     HandGestureStateMachine,
 )
-from sign_vision.normalizer import (
+from sign_vision.transforms import (
     EPSILON,
     HandStabilizer,
     OneEuroFilter,
     compute_bounding_box,
     normalize_landmarks,
 )
-from sign_vision.tracker import SignHandTracker, SignHandTrackerOptions
+from sign_vision.engine import SignHandTracker, SignHandTrackerOptions
 
 __version__ = "0.2.1"
 

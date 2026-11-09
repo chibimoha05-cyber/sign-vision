@@ -49,9 +49,9 @@ import numpy as np
 # Ensure src/ is on sys.path
 sys.path.insert(0, os.path.join(_project_root, "src"))
 
-from sign_vision.camera import ThreadedCamera
-from sign_vision.normalizer import HandStabilizer
-from sign_vision.tracker import SignHandTracker
+from sign_vision.capture import ThreadedCamera
+from sign_vision.transforms import HandStabilizer
+from sign_vision.engine import SignHandTracker
 
 
 def generate_synthetic_hand_frame(width: int, height: int, frame_idx: int) -> np.ndarray:

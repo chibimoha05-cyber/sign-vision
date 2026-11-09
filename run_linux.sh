@@ -17,6 +17,6 @@ if [ ! -f ".venv/bin/python" ]; then
     .venv/bin/pip install -e .
 fi
 
-echo "[*] Launching Real-Time Live Inspector..."
-.venv/bin/python tools/live_inspector.py "$@"
+echo "[*] Launching Real-Time Demo Visualizer..."
+.venv/bin/python examples/demo.py "$@"
 

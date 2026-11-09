@@ -29,7 +29,7 @@ import cv2
 import numpy as np
 
 from dataclasses import dataclass
-from sign_vision.contracts import (
+from sign_vision.schema import (
     LANDMARK_COUNT,
     TOTAL_FEATURE_DIM,
     FEATURE_DIM_V1,
@@ -54,14 +54,14 @@ from sign_vision.kinematics import (
     HandKinematicsEngine,
     KinematicFeatures,
 )
-from sign_vision.gesture_engine import HandGestureStateMachine
-from sign_vision.normalizer import (
+from sign_vision.gestures import HandGestureStateMachine
+from sign_vision.transforms import (
     HandStabilizer,
     OneEuroFilter,
     compute_bounding_box,
     normalize_landmarks,
 )
-from sign_vision.rtmpose_backend import RTMPoseBackend
+from sign_vision.backends import RTMPoseBackend
 
 logger = logging.getLogger(__name__)
 

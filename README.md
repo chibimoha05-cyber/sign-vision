@@ -248,13 +248,13 @@ if result.presence_mask[1] == 1:  # Right hand detected
 
 ---
 
-## Diagnostic Tools & Utilities
+## Diagnostic Examples & Utilities
 
-### 1. Real-Time HUD Diagnostic Viewer
+### 1. Real-Time Telemetry & Visualizer Demo
 Launches the high-throughput Cyber HUD overlay with live telemetry, per-joint kinematic states, and latency profiling:
 
 ```bash
-python tools/live_inspector.py --camera 0
+python examples/demo.py --camera 0
 ```
 
 *Interactive Hotkeys:*
@@ -266,14 +266,14 @@ python tools/live_inspector.py --camera 0
 
 *Headless Synthetic Benchmark:*
 ```bash
-python tools/live_inspector.py --benchmark-synthetic --frames 300 --headless
+python examples/demo.py --benchmark-synthetic --frames 300 --headless
 ```
 
 ### 2. Dataset Acquisition Suite
 Interactive utility for capturing standardized sign language samples into training CSVs:
 
 ```bash
-python tools/dataset_recorder.py --label "HELLO" --samples 150 --output data/signs.csv
+python examples/record_dataset.py --label "HELLO" --samples 150 --output data/signs.csv
 ```
 
 ---
@@ -290,12 +290,12 @@ pytest -v
 ============================= test session starts ==============================
 collected 29 items
 
-tests/test_gesture_engine.py .....                                       [ 17%]
-tests/test_kinematics.py .....                                           [ 34%]
-tests/test_normalizer.py ...........                                     [ 72%]
-tests/test_tracker_pipeline.py ........                                  [100%]
+tests/test_engine.py ........                                            [ 27%]
+tests/test_gestures.py .....                                             [ 44%]
+tests/test_kinematics.py .....                                           [ 62%]
+tests/test_transforms.py ...........                                     [100%]
 
-============================== 29 passed in 19.9s ==============================
+============================== 29 passed in 17.4s ==============================
 ```
 
 *Key Automated Mathematical Verifications:*
@@ -312,32 +312,33 @@ tests/test_tracker_pipeline.py ........                                  [100%]
 ```text
 sign-vision/
 ├── .gitignore                      # Environment, cache, and OS filter rules
+├── LICENSE                         # Official MIT License
 ├── README.md                       # Master technical documentation
 ├── pyproject.toml                  # PEP 517/518 build specification
 ├── requirements.txt                # Pinned production dependencies
 ├── run_linux.sh                    # 1-Click setup & runner for Linux
 ├── run_windows.bat                 # 1-Click setup & runner for Windows
+├── examples/
+│   ├── demo.py                     # Real-Time Cyber HUD visualizer & demo
+│   └── record_dataset.py           # Standardized sign language dataset collector
 ├── models/
 │   └── hand_landmarker.task        # MediaPipe Tasks model asset (7.5 MB)
 ├── src/
 │   └── sign_vision/
 │       ├── __init__.py             # Public API exports
-│       ├── camera.py               # Zero-lag multi-threaded camera acquisition
-│       ├── contracts.py            # 144-D vector contract & dataclass schemas
-│       ├── gesture_engine.py       # Biomechanical gesture state machine
+│       ├── backends.py             # Optional RTMPose SimCC backend
+│       ├── capture.py              # Zero-lag multi-threaded camera acquisition
+│       ├── engine.py               # Core real-time tracker & disambiguation engine
+│       ├── gestures.py             # Biomechanical gesture state machine
 │       ├── kinematics.py           # Bone rigidity, finger curls, splays, pinches
-│       ├── normalizer.py           # Vectorized 1€ filter & spatial normalizer
-│       ├── rtmpose_backend.py      # Optional RTMPose SimCC backend
-│       └── tracker.py              # Core real-time tracker & disambiguation engine
-├── tests/
-│   ├── conftest.py                 # Test fixtures & synthetic generation
-│   ├── test_gesture_engine.py      # Dynamic gesture state tests
-│   ├── test_kinematics.py          # Biomechanical proofs & curl decoupling
-│   ├── test_normalizer.py          # Mathematical proofs (One-Euro, scaling)
-│   └── test_tracker_pipeline.py    # Pipeline integration & contract tests
-└── tools/
-    ├── dataset_recorder.py         # Sign language dataset collection CLI
-    └── live_inspector.py           # Real-Time Cyber HUD diagnostic viewer
+│       ├── schema.py               # 144-D vector contract & dataclass schemas
+│       └── transforms.py           # Vectorized 1€ filter & spatial normalizer
+└── tests/
+    ├── conftest.py                 # Test fixtures & synthetic generation
+    ├── test_engine.py              # Pipeline integration & contract tests
+    ├── test_gestures.py            # Dynamic gesture state tests
+    ├── test_kinematics.py          # Biomechanical proofs & curl decoupling
+    └── test_transforms.py          # Mathematical proofs (One-Euro, scaling)
 ```
 
 ---

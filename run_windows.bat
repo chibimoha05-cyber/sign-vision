@@ -34,9 +34,9 @@ if not exist ".venv\Scripts\python.exe" (
     call .venv\Scripts\activate.bat
 )
 
-:: 3. Launch Live Inspector
-echo [*] Launching Real-Time Live Inspector...
-python tools\live_inspector.py %*
+:: 3. Launch Demo
+echo [*] Launching Real-Time Demo Visualizer...
+python examples\demo.py %*
 
 if %ERRORLEVEL% neq 0 (
     echo.
