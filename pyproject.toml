@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sign_vision"
+version = "0.1.0"
+description = "Production-grade Phase 1 Hand-Tracking & Feature Extraction Engine for Real-Time Sign Language Translation"
+readme = "README.md"
+authors = [{ name = "Sign Language Translation Team" }]
+requires-python = ">=3.10"
+dependencies = [
+    "mediapipe>=0.10.0",
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0,<3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
