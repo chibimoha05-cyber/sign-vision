@@ -1,14 +1,8 @@
-"""Multi-Threaded Low-Latency Camera Capture Engine.
+"""Camera capture engine providing low-latency, threaded frame acquisition.
 
-Key Architectural Guarantees:
-1. Zero-Buffer Lag: Dedicated daemon thread continuously pulls the newest frame from the hardware
-   bus, discarding stale OS buffer queues so the tracker never runs on outdated frames.
-2. Cross-Platform Backend Negotiation: Strictly sets V4L2 + MJPG before and after resolution/FPS
-   negotiation on Linux to prevent uncompressed YUYV down-throttling.
-3. Anti-Throttling: Automatically disables V4L2 dynamic frame-rate throttling in low light.
-4. Hardware FPS Telemetry: Independently measures and exposes actual camera capture FPS (camera_fps).
-5. Natural Selfie Mirroring: Mirrors horizontal axis by default (cv2.flip(frame, 1)) so user
-   movements feel intuitive on screen, aligning user Left/Right with visual feedback.
+Maintains a background thread that continuously drains the hardware buffer so the
+consumer always reads the most recent frame without accumulating lag. Supports
+cross-platform backend selection and optional adaptive exposure control on Linux.
 """
 
 from __future__ import annotations
@@ -44,12 +38,12 @@ class ThreadedCamera:
 
         Args:
             device_index: Camera device ID (default 0).
-            width: Desired capture width (default 640 for crisp high-FPS capture).
-            height: Desired capture height (default 480).
-            target_fps: Desired capture FPS (default 60).
+            width: Desired capture width in pixels.
+            height: Desired capture height in pixels.
+            target_fps: Desired capture frame rate.
             mirror: If True, horizontally flips frames for selfie perspective.
             backend: Optional cv2 VideoCapture backend override.
-            anti_blur_mode: If True, engages V4L2 fast-shutter exposure tuning.
+            anti_blur_mode: If True, engages fast-shutter exposure tuning on Linux.
         """
         self.device_index = device_index
         self.requested_width = width
@@ -73,16 +67,17 @@ class ThreadedCamera:
         self._actual_height: int = 0
         self._actual_fps: float = 0.0
 
-        # Independent hardware capture FPS telemetry
         self._capture_times = collections.deque(maxlen=30)
         self._hardware_fps: float = 0.0
 
-        # Anti-Blur Fast Shutter settings & Gamma LUT
         self.anti_blur_mode: bool = anti_blur_mode
         self.current_exposure_time: int = 100
         gamma = 1.45
         inv_gamma = 1.0 / gamma
-        self._gamma_lut = np.array([np.clip(((i / 255.0) ** inv_gamma) * 255.0, 0, 255) for i in range(256)], dtype=np.uint8)
+        self._gamma_lut = np.array(
+            [np.clip(((i / 255.0) ** inv_gamma) * 255.0, 0, 255) for i in range(256)],
+            dtype=np.uint8,
+        )
         self._needs_gamma_boost: bool = False
 
     @property
@@ -91,7 +86,7 @@ class ThreadedCamera:
 
     @staticmethod
     def _select_optimal_backend(preferred_backend: Optional[int] = None) -> list[int]:
-        """Returns ordered list of backends to attempt based on the OS."""
+        """Returns ordered list of backends to attempt based on the current OS."""
         if preferred_backend is not None:
             return [preferred_backend, cv2.CAP_ANY]
 
@@ -105,7 +100,7 @@ class ThreadedCamera:
         return [cv2.CAP_ANY]
 
     def _disable_v4l2_framerate_throttling(self) -> None:
-        """Attempts to disable Linux V4L2 dynamic frame-rate throttling in low light."""
+        """Attempts to disable V4L2 dynamic frame-rate throttling on Linux."""
         if "linux" not in platform.system().lower():
             return
 
@@ -132,32 +127,27 @@ class ThreadedCamera:
             try:
                 cap = cv2.VideoCapture(self.device_index, b)
                 if cap.isOpened():
-                    # 1. Strict pre-resolution MJPG FOURCC request
                     try:
                         cap.set(cv2.CAP_PROP_FOURCC, fourcc_mjpg)
                     except Exception:
                         pass
 
-                    # 2. Configure Resolution & Target FPS
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.requested_width)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.requested_height)
                     cap.set(cv2.CAP_PROP_FPS, self.target_fps)
 
-                    # 3. Strict post-resolution MJPG FOURCC confirmation (ensures driver preserves MJPG)
                     try:
                         cap.set(cv2.CAP_PROP_FOURCC, fourcc_mjpg)
                     except Exception:
                         pass
 
-                    # 4. Minimize hardware/driver queue buffer to 1 frame (prevents lag accumulation)
                     try:
                         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     except Exception:
                         pass
 
-                    # 5. Attempt auto-exposure tuning to prevent sensor framerate throttling
                     try:
-                        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)  # Aperture priority
+                        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
                     except Exception:
                         pass
 
@@ -207,13 +197,11 @@ class ThreadedCamera:
         while self._is_running and self._cap is not None:
             ret, frame = self._cap.read()
             if not ret or frame is None:
-                # Driver stall or frame drop: sleep briefly to avoid pegging CPU
                 time.sleep(0.002)
                 continue
 
             now = time.perf_counter()
 
-            # Track empirical hardware capture FPS
             self._capture_times.append(now)
             if len(self._capture_times) >= 2:
                 duration = self._capture_times[-1] - self._capture_times[0]
@@ -235,12 +223,12 @@ class ThreadedCamera:
     ) -> Tuple[bool, Optional[np.ndarray], int, float]:
         """Waits for and returns a strictly new unique hardware camera frame.
 
-        Guarantees that each camera frame is processed exactly once by tracking the hardware
-        frame index, completely eliminating duplicate frame processing.
+        Guarantees that each camera frame is processed exactly once by tracking the
+        hardware frame index, completely eliminating duplicate frame processing.
 
         Args:
             last_consumed_index: The index of the previously processed frame.
-            timeout: Maximum wait time in seconds (default 0.1s).
+            timeout: Maximum wait time in seconds.
 
         Returns:
             Tuple of (success, frame_bgr, frame_index, timestamp_seconds).
@@ -264,7 +252,6 @@ class ThreadedCamera:
             idx = self._frame_index
             ts = self._frame_timestamp
 
-        # Fast Gamma LUT luminance recovery for indoor fast shutter mode
         if self.anti_blur_mode and self._gamma_lut is not None:
             if idx % 15 == 0:
                 mean_lum = float(np.mean(frame))
@@ -276,28 +263,27 @@ class ThreadedCamera:
         return True, frame, idx, ts
 
     def set_anti_blur(self, enabled: bool, exposure_time: Optional[int] = None) -> bool:
-        """Toggles V4L2 Fast Shutter mode to eliminate indoor motion blur on Linux."""
+        """Toggles fast-shutter mode to eliminate motion blur on Linux."""
         self.anti_blur_mode = enabled
         if exposure_time is not None:
             self.current_exposure_time = int(np.clip(exposure_time, 20, 600))
         return self._apply_v4l2_exposure_settings()
 
     def adjust_exposure(self, delta: int) -> int:
-        """Increases or decreases manual exposure time by delta (microseconds/units)."""
+        """Increases or decreases manual exposure time by delta."""
         self.current_exposure_time = int(np.clip(self.current_exposure_time + delta, 20, 600))
         self.anti_blur_mode = True
         self._apply_v4l2_exposure_settings()
         return self.current_exposure_time
 
     def _apply_v4l2_exposure_settings(self) -> bool:
-        """Executes V4L2 hardware controls on Linux video device."""
+        """Executes V4L2 hardware exposure controls on the Linux video device."""
         if "linux" not in platform.system().lower():
             return False
 
         dev_path = f"/dev/video{self.device_index}"
         try:
             if self.anti_blur_mode:
-                # 1 = Manual Exposure
                 subprocess.run(["v4l2-ctl", "-d", dev_path, "-c", "auto_exposure=1"], capture_output=True, timeout=0.25)
                 subprocess.run(
                     ["v4l2-ctl", "-d", dev_path, "-c", f"exposure_time_absolute={self.current_exposure_time}"],
@@ -305,21 +291,20 @@ class ThreadedCamera:
                     timeout=0.25,
                 )
                 logger.info(
-                    "V4L2 Anti-Blur FAST SHUTTER enabled on %s (exposure=%d)",
+                    "V4L2 fast shutter enabled on %s (exposure=%d)",
                     dev_path,
                     self.current_exposure_time,
                 )
             else:
-                # 3 = Aperture Priority / Auto Exposure
                 subprocess.run(["v4l2-ctl", "-d", dev_path, "-c", "auto_exposure=3"], capture_output=True, timeout=0.25)
-                logger.info("V4L2 Auto-Exposure re-enabled on %s", dev_path)
+                logger.info("V4L2 auto-exposure re-enabled on %s", dev_path)
             return True
         except Exception as e:
             logger.debug("Could not configure V4L2 exposure on %s: %s", dev_path, e)
             return False
 
     def read(self, timeout: float = 1.0) -> Tuple[bool, Optional[np.ndarray]]:
-        """Reads the newest captured frame (compatible with cv2.VideoCapture interface).
+        """Reads the newest captured frame. Compatible with the cv2.VideoCapture interface.
 
         Args:
             timeout: Maximum wait time for a frame in seconds.
@@ -333,7 +318,7 @@ class ThreadedCamera:
     def read_latest(
         self, timeout: float = 1.0
     ) -> Tuple[bool, Optional[np.ndarray], int, float]:
-        """Reads the latest frame along with monotonic index and capture timestamp.
+        """Reads the latest frame along with its monotonic index and capture timestamp.
 
         Args:
             timeout: Seconds to wait for at least one frame.
@@ -383,22 +368,22 @@ class ThreadedCamera:
         self.stop()
 
     def is_opened(self) -> bool:
-        """Checks if the camera device is currently open and running."""
+        """Returns True if the camera device is currently open and running."""
         return self._is_running and (self._cap is not None and self._cap.isOpened())
 
     @property
     def actual_size(self) -> Tuple[int, int]:
-        """Returns (width, height) of active camera capture stream."""
+        """Returns (width, height) of the active camera capture stream."""
         return (self._actual_width, self._actual_height)
 
     @property
     def actual_fps(self) -> float:
-        """Returns configured FPS of the camera."""
+        """Returns the configured FPS of the camera stream."""
         return self._actual_fps
 
     @property
     def hardware_fps(self) -> float:
-        """Returns real-time empirical hardware camera capture FPS."""
+        """Returns the real-time empirical hardware capture FPS."""
         return self._hardware_fps
 
     @property

@@ -1,12 +1,8 @@
-"""Hierarchical Gesture Engine & Temporal State Machine for Sign Language Translation.
+"""Hierarchical gesture recognition engine for sign language translation.
 
-Ported and enhanced from Caelestia Shell's industrial-grade gesture architecture:
-- FeatureExtraction: Evaluates 5-bit binary finger mask, pinch distances, curl ratios, and spatial tilt.
-- Pure Gesture Recognizers: Evaluates gesture candidates with zero hardware side-effects.
-- Priority-Based Arbitration (GestureArbiter): Selects single winning candidate based on Priority + Confidence.
-- Temporal State Machine (GestureStateMachine):
-  Transitions: IDLE -> CANDIDATE -> CONFIRMED -> ACTIVE -> RELEASING -> IDLE.
-  Enforces multi-frame hysteresis, prevents state flickering, and allows instant preemption for high-priority gestures.
+Implements a 5-bit binary finger mask feature extractor, a suite of pure gesture recognizers,
+a priority-based arbiter that selects a single winning candidate per frame, and a temporal
+state machine (IDLE → CANDIDATE → ACTIVE → RELEASING → IDLE) with hysteresis and preemption.
 """
 
 from __future__ import annotations
@@ -24,21 +20,20 @@ class GestureName(str, enum.Enum):
     """Canonical Sign Language & Control Hand Gestures."""
 
     NONE = "none"
-    FIST = "fist"  # Binary mask 0 (all curled)
-    OPEN_PALM = "open_palm"  # Binary mask 31 (all open)
-    POINT = "point"  # Index extended, others curled (mask 8 or 24)
-    PEACE_V = "peace_v"  # Index + Middle extended (mask 12 or 28)
-    THREE_FINGERS = "three_fingers"  # Index + Middle + Ring extended (mask 14)
-    FOUR_FINGERS = "four_fingers"  # Index + Middle + Ring + Pinky (mask 15)
-    ROCK_HORNS = "rock_horns"  # Index + Pinky extended (mask 9 or 25)
-    SHAKA = "shaka"  # Thumb + Pinky extended (mask 17)
-    OK_PINCH = "ok_pinch"  # Thumb touching Index tip
-    PINCH_MID = "pinch_mid"  # Thumb touching Middle tip
-    THUMB_UP = "thumb_up"  # Thumb extended upward, other fingers curled
-    THUMB_DOWN = "thumb_down"  # Thumb extended downward, other fingers curled
+    FIST = "fist"
+    OPEN_PALM = "open_palm"
+    POINT = "point"
+    PEACE_V = "peace_v"
+    THREE_FINGERS = "three_fingers"
+    FOUR_FINGERS = "four_fingers"
+    ROCK_HORNS = "rock_horns"
+    SHAKA = "shaka"
+    OK_PINCH = "ok_pinch"
+    PINCH_MID = "pinch_mid"
+    THUMB_UP = "thumb_up"
+    THUMB_DOWN = "thumb_down"
 
 
-# Priority Table: Higher priority gestures preempt lower ones
 GESTURE_PRIORITY: Dict[GestureName, int] = {
     GestureName.NONE: 0,
     GestureName.OPEN_PALM: 50,
@@ -61,8 +56,8 @@ class GestureCandidate:
     """A recognized gesture proposal with confidence and priority."""
 
     gesture: GestureName
-    hand: str  # "Left" | "Right" | "Any"
-    confidence: float  # 0.0 - 1.0
+    hand: str
+    confidence: float
     valid: bool
     data: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
@@ -101,7 +96,6 @@ class FistRecognizer(BaseGestureRecognizer):
         tilt_angle_deg: float,
         hand_label: str = "Right",
     ) -> GestureCandidate:
-        # Mask 0 = all 5 fingers curled (or 16 if thumb slightly out, but curls < 0.25)
         is_fist = (binary_mask == 0) or (binary_mask == 16 and finger_curls[0] < 0.35 and np.all(finger_curls[1:] < 0.25))
         if not is_fist and np.all(finger_curls < 0.28):
             is_fist = True
@@ -149,7 +143,6 @@ class PointRecognizer(BaseGestureRecognizer):
         tilt_angle_deg: float,
         hand_label: str = "Right",
     ) -> GestureCandidate:
-        # Binary mask: Index open (bit 3 = 8), Middle/Ring/Pinky closed. Thumb may be relaxed (mask 8 or 24).
         is_point = (binary_mask in (8, 24)) or (
             finger_curls[1] > 0.70 and finger_curls[2] < 0.35 and finger_curls[3] < 0.35 and finger_curls[4] < 0.35
         )
@@ -173,7 +166,6 @@ class PeaceVRecognizer(BaseGestureRecognizer):
         tilt_angle_deg: float,
         hand_label: str = "Right",
     ) -> GestureCandidate:
-        # Binary mask: Index (8) + Middle (4) = 12 (or 28 with thumb)
         is_peace = (binary_mask in (12, 28)) or (
             finger_curls[1] > 0.65
             and finger_curls[2] > 0.65
@@ -200,7 +192,6 @@ class ThreeFingersRecognizer(BaseGestureRecognizer):
         tilt_angle_deg: float,
         hand_label: str = "Right",
     ) -> GestureCandidate:
-        # Binary mask: 8 + 4 + 2 = 14 (or 30 with thumb)
         is_three = (binary_mask in (14, 30)) or (
             finger_curls[1] > 0.65
             and finger_curls[2] > 0.65
@@ -227,7 +218,6 @@ class FourFingersRecognizer(BaseGestureRecognizer):
         tilt_angle_deg: float,
         hand_label: str = "Right",
     ) -> GestureCandidate:
-        # Mask: 8 + 4 + 2 + 1 = 15
         is_four = (binary_mask == 15) or (
             finger_curls[0] < 0.40
             and finger_curls[1] > 0.65
@@ -255,7 +245,6 @@ class RockHornsRecognizer(BaseGestureRecognizer):
         tilt_angle_deg: float,
         hand_label: str = "Right",
     ) -> GestureCandidate:
-        # Mask: 8 + 1 = 9 (or 25 with thumb)
         is_rock = (binary_mask in (9, 25)) or (
             finger_curls[1] > 0.65
             and finger_curls[4] > 0.65
@@ -282,7 +271,6 @@ class ShakaRecognizer(BaseGestureRecognizer):
         tilt_angle_deg: float,
         hand_label: str = "Right",
     ) -> GestureCandidate:
-        # Mask: 16 + 1 = 17
         is_shaka = (binary_mask == 17) or (
             finger_curls[0] > 0.65
             and finger_curls[4] > 0.65
@@ -310,8 +298,6 @@ class OkPinchRecognizer(BaseGestureRecognizer):
         tilt_angle_deg: float,
         hand_label: str = "Right",
     ) -> GestureCandidate:
-        # Pinch distance between Thumb and Index is pinch_distances[0]
-        # In scale-invariant normalized units, pinch < 0.22 indicates contact
         d_ti = float(pinch_distances[0]) if len(pinch_distances) > 0 else 1.0
         is_ok = d_ti < 0.22 and (finger_curls[2] > 0.40 or finger_curls[3] > 0.40 or finger_curls[4] > 0.40)
         confidence = float(np.clip(1.0 - (d_ti / 0.22), 0.0, 1.0)) if is_ok else 0.0
@@ -338,7 +324,6 @@ class ThumbUpRecognizer(BaseGestureRecognizer):
         is_thumb_only = (binary_mask == 16) or (
             finger_curls[0] > 0.65 and np.all(finger_curls[1:] < 0.35)
         )
-        # Upright tilt: |tilt_angle_deg| <= 55°
         is_up = is_thumb_only and abs(tilt_angle_deg) <= 55.0
         confidence = float(finger_curls[0]) if is_up else 0.0
         return GestureCandidate(
@@ -363,7 +348,6 @@ class ThumbDownRecognizer(BaseGestureRecognizer):
         is_thumb_only = (binary_mask == 16) or (
             finger_curls[0] > 0.65 and np.all(finger_curls[1:] < 0.35)
         )
-        # Downward tilt: |tilt_angle_deg| >= 125°
         is_down = is_thumb_only and abs(tilt_angle_deg) >= 125.0
         confidence = float(finger_curls[0]) if is_down else 0.0
         return GestureCandidate(
@@ -499,7 +483,6 @@ class HandGestureStateMachine:
                     self.just_activated = True
                     self.release_counter = 0
             elif winner.valid and winner.gesture != GestureName.NONE:
-                # Switch candidate
                 self.candidate = winner
                 self.candidate_frames = 1
             else:
@@ -508,12 +491,10 @@ class HandGestureStateMachine:
                 self.candidate_frames = 0
 
         elif self.state == GestureState.ACTIVE:
-            # Check for instant preemption: higher priority gesture immediately interrupts active gesture
             if winner.valid and winner.gesture != self.active_gesture:
                 winner_prio = winner.priority
                 current_prio = GESTURE_PRIORITY.get(self.active_gesture, 0)
                 if winner_prio > current_prio:
-                    # Instant preemption
                     self.active_gesture = winner.gesture
                     self.state = GestureState.ACTIVE
                     self.just_activated = True
@@ -527,12 +508,10 @@ class HandGestureStateMachine:
                 self.state = GestureState.RELEASING
                 self.release_counter = 1
             else:
-                # Still holding active gesture
                 self.release_counter = 0
 
         elif self.state == GestureState.RELEASING:
             if winner.valid and winner.gesture == self.active_gesture:
-                # Re-engaged
                 self.state = GestureState.ACTIVE
                 self.release_counter = 0
             elif winner.valid and winner.gesture != GestureName.NONE:

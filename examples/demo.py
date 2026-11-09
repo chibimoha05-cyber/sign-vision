@@ -1,23 +1,9 @@
 #!/usr/bin/env python3
-"""Live Inspector & Real-Time HUD Diagnostic Viewer (Phase 3.0 High-Velocity).
+"""Live Inspector and Real-Time HUD Diagnostic Viewer for hand tracking.
 
-Visualizes:
-- Unique hardware camera capture on /dev/video0 (verified non-duplicate frame lock).
-- Anti-Blur Fast Shutter control via V4L2 + Gamma LUT brightness compensation.
-- Decoupled fast inference scaling (<16ms latency) with Cyber HUD aesthetic.
-- Dual-Mode Fast-Motion Recovery (VIDEO + IMAGE full-frame palm detector fallback).
-- Multi-Hand Disambiguation (OKS NMS + Hungarian Spatial/Kinematic Assignment).
-- Multi-Backend Live Switching: MediaPipe Tasks Hybrid <-> OpenMMLab RTMPose SimCC.
-- Interactive hotkeys:
-    'b': Switch backend engine (MediaPipe Tasks Hybrid <-> RTMPose SimCC)
-    'e': Toggle V4L2 Anti-Blur Fast Shutter mode on /dev/video0
-    '[' / ']': Decrease / Increase camera hardware exposure time
-    's': Cycle smoothing mode (High-Speed 1-Euro -> Ultra-Fast -> Raw Unfiltered)
-    'k': Toggle Biomechanical Finger State HUD
-    'l': Toggle fast lighting normalization / contrast auto-stretch
-    'n': Print snapshot of the 144-float feature vector to terminal
-    'q' / ESC: Clean exit
-- Automatic --benchmark-synthetic mode for headless verification or systems without webcams.
+Captures hardware camera input or runs a synthetic benchmark, processes frames
+through the SignHandTracker pipeline, and renders a Cyber HUD overlay with
+feature vector telemetry, kinematics, and backend/exposure controls.
 """
 
 from __future__ import annotations
@@ -27,7 +13,6 @@ import os
 import sys
 import time
 
-# Auto-trampoline to project .venv if running with unconfigured system Python
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _venv_python = (
     os.path.join(_project_root, ".venv", "Scripts", "python.exe")
@@ -46,7 +31,6 @@ from typing import Optional
 import cv2
 import numpy as np
 
-# Ensure src/ is on sys.path
 sys.path.insert(0, os.path.join(_project_root, "src"))
 
 from sign_vision.capture import ThreadedCamera
@@ -62,10 +46,8 @@ def generate_synthetic_hand_frame(width: int, height: int, frame_idx: int) -> np
     cx = int(width * 0.5 + np.sin(t) * 40)
     cy = int(height * 0.55 + np.cos(t) * 30)
 
-    # Draw palm base
     cv2.circle(frame, (cx, cy), 55, (190, 205, 235), -1, cv2.LINE_AA)
 
-    # Draw 5 fingers
     finger_angles = [-0.6, -0.3, 0.0, 0.3, 0.6]
     finger_lens = [75, 95, 105, 90, 70]
     for angle, flen in zip(finger_angles, finger_lens):
@@ -74,7 +56,6 @@ def generate_synthetic_hand_frame(width: int, height: int, frame_idx: int) -> np
         cv2.line(frame, (cx, cy - 15), (fx, fy), (180, 195, 225), 18, cv2.LINE_AA)
         cv2.circle(frame, (fx, fy), 10, (180, 195, 225), -1, cv2.LINE_AA)
 
-    # Add subtle wrist
     cv2.rectangle(frame, (cx - 25, cy + 25), (cx + 25, cy + 110), (170, 185, 215), -1)
 
     return frame
@@ -108,7 +89,6 @@ def render_feature_vector_hud(
     pres_str = f"Pres: L={int(feature_vector[0])} R={int(feature_vector[1])}"
     cv2.putText(frame, pres_str, (x + 10, y + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 210, 220), 1, cv2.LINE_AA)
 
-    # Mini bar representation of first 24 landmark dimensions
     bars_start_x = x + 10
     bars_y_center = y + 75
     sample_values = feature_vector[2:26]
@@ -123,7 +103,6 @@ def render_feature_vector_hud(
         else:
             cv2.rectangle(frame, (bx, bars_y_center), (bx + bar_w - 1, bars_y_center - bar_h), color, -1)
 
-    # Zero-line
     cv2.line(frame, (bars_start_x, bars_y_center), (bars_start_x + len(sample_values) * bar_w, bars_y_center), (100, 110, 120), 1)
 
     cv2.putText(
@@ -228,11 +207,9 @@ def run_inspector(
                     continue
                 last_consumed_idx = new_idx
 
-            # Process frame through SignHandTracker pipeline
             result = tracker.process_frame(frame_bgr)
             latency_history.append(result.inference_latency_ms)
 
-            # Draw HUD Overlays
             cam_fps = cam.hardware_fps if cam is not None else 0.0
             annotated = tracker.draw_overlays(
                 frame_bgr,
@@ -243,7 +220,6 @@ def run_inspector(
             )
             render_feature_vector_hud(annotated, result.feature_vector)
 
-            # Rolling Pipeline FPS
             now = time.perf_counter()
             dt = now - last_time
             last_time = now
@@ -253,7 +229,6 @@ def run_inspector(
                 fps_history.pop(0)
                 latency_history.pop(0)
 
-            # Render overall FPS on top right
             avg_fps = sum(fps_history) / len(fps_history) if fps_history else 0.0
             avg_lat = sum(latency_history) / len(latency_history) if latency_history else 0.0
             exp_str = f" | Exp:{cam.exposure_val}" if (cam and cam.anti_blur_mode) else ""
@@ -336,7 +311,7 @@ def run_inspector(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="SignVision Live Inspector & HUD Diagnostic Tool (Phase 3.0)")
+    parser = argparse.ArgumentParser(description="SignVision Live Inspector & HUD Diagnostic Tool")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device ID (default: 0)")
     parser.add_argument("--width", type=int, default=640, help="Frame width (default: 640)")
     parser.add_argument("--height", type=int, default=480, help="Frame height (default: 480)")

@@ -1,8 +1,8 @@
-"""Sign Vision: Phase 1 Hand-Tracking & Feature Extraction Engine.
+"""sign_vision: Real-time biomechanical hand tracking and kinematic feature extraction.
 
-Ultra-low-latency real-time pipeline capturing frames, tracking 3D hand landmarks via MediaPipe,
-applying wrist-centered translation and scale normalization with adaptive EMA smoothing,
-and outputting strict, deterministic 128-float feature vectors for ML training and real-time inference.
+Provides the public API for the sign language perception pipeline including the
+tracker engine, landmark transforms, kinematics, gesture state machine, and
+the canonical 144-dimensional feature vector contract.
 """
 
 from sign_vision.schema import (
@@ -69,4 +69,3 @@ __all__ = [
     "FEATURE_DIM_V2",
     "EPSILON",
 ]
-

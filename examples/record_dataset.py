@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Dataset Recorder for Sign Language Training (Team Members 2 & 3).
+"""Dataset recorder for sign language ML training.
 
-Interactive CLI/GUI utility that:
-- Captures real-time hand movements for a designated sign label.
-- Only commits samples to CSV when at least one hand is actively detected (presence_mask != (0, 0)).
-- Exports deterministic CSV format:
-    timestamp_ms, label, has_left, has_right, f_0, f_1, ..., f_125
-- Includes pre-record countdown, live sample counter, and progress telemetry.
+Captures real-time hand landmark features for a designated sign label and writes
+them to a deterministic CSV format (timestamp_ms, label, has_left, has_right, f_0…f_141).
+Samples are committed only when at least one hand is actively detected.
 """
 
 from __future__ import annotations
@@ -18,7 +15,6 @@ from pathlib import Path
 import sys
 import time
 
-# Auto-trampoline to project .venv if running with unconfigured system Python
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _venv_python = (
     os.path.join(_project_root, ".venv", "Scripts", "python.exe")
@@ -37,7 +33,6 @@ from typing import Optional
 import cv2
 import numpy as np
 
-# Ensure src/ is on sys.path
 sys.path.insert(0, os.path.join(_project_root, "src"))
 
 from sign_vision.capture import ThreadedCamera
@@ -46,9 +41,8 @@ from sign_vision.engine import SignHandTracker
 
 
 def build_csv_header() -> list[str]:
-    """Generates canonical CSV header matching the Phase 2.0 ML training specification."""
+    """Generates canonical CSV header for dataset recording."""
     header = ["timestamp_ms", "label", "has_left", "has_right"]
-    # 142 features (68 left + 68 right + 6 global kinematics)
     for i in range(142):
         header.append(f"f_{i}")
     return header
@@ -103,7 +97,6 @@ def record_dataset(
     start_time = time.time()
     countdown_end = start_time + countdown_sec
 
-    # Open CSV file in append mode
     with open(out_file, mode="a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not file_exists:
@@ -116,9 +109,7 @@ def record_dataset(
                 now = time.time()
 
                 if synthetic:
-                    # Synthetic test frame: create a black canvas and inject mock detection
                     frame_bgr = np.zeros((height, width, 3), dtype=np.uint8)
-                    # Simulate synthetic hand
                     t = frame_idx * 0.1
                     cx = int(width * 0.5 + np.sin(t) * 30)
                     cy = int(height * 0.5)
@@ -132,13 +123,11 @@ def record_dataset(
                 result: FrameTrackingResult = tracker.process_frame(frame_bgr)
                 annotated = tracker.draw_overlays(frame_bgr, result, draw_hud=False)
 
-                # State Machine: COUNTDOWN vs RECORDING
                 if state == "COUNTDOWN":
                     remaining = max(0.0, countdown_end - now)
                     if remaining <= 0:
                         state = "RECORDING"
                     else:
-                        # Draw countdown overlay
                         cx, cy = width // 2, height // 2
                         overlay = annotated.copy()
                         cv2.rectangle(overlay, (cx - 250, cy - 80), (cx + 250, cy + 80), (10, 10, 15), -1)
@@ -165,13 +154,10 @@ def record_dataset(
                         )
 
                 elif state == "RECORDING":
-                    # Record row ONLY when at least one hand is detected
                     if result.has_any_hand or synthetic:
-                        # Vector indices: 0 is has_left, 1 is has_right, 2..143 are the 142 features
                         vec = result.feature_vector
                         has_l = int(vec[0])
                         has_r = int(vec[1])
-                        # If synthetic mode in test has no palm, synthesize a dummy valid coordinate
                         if synthetic and not result.has_any_hand:
                             has_r = 1
                             coords = [float(np.sin(frame_idx * 0.05))] * 142
@@ -183,14 +169,12 @@ def record_dataset(
                         f.flush()
                         collected_samples += 1
 
-                    # Recording HUD Banner
                     rx, ry, rw, rh = 16, 16, 420, 95
                     overlay = annotated.copy()
                     cv2.rectangle(overlay, (rx, ry), (rx + rw, ry + rh), (15, 18, 22), -1)
                     cv2.addWeighted(overlay, 0.85, annotated, 0.15, 0, annotated)
                     cv2.rectangle(annotated, (rx, ry), (rx + rw, ry + rh), (40, 60, 220), 2, cv2.LINE_AA)
 
-                    # Pulsing red recording dot
                     pulse = int(255 * (0.6 + 0.4 * np.sin(time.time() * 6.0)))
                     cv2.circle(annotated, (rx + 24, ry + 28), 8, (30, 30, pulse), -1, cv2.LINE_AA)
 
@@ -205,13 +189,11 @@ def record_dataset(
                         cv2.LINE_AA,
                     )
 
-                    # Progress Bar
                     bar_w = rw - 40
                     bar_filled = int(bar_w * (collected_samples / max(1, samples_needed)))
                     cv2.rectangle(annotated, (rx + 20, ry + 52), (rx + 20 + bar_w, ry + 66), (40, 45, 55), -1)
                     cv2.rectangle(annotated, (rx + 20, ry + 52), (rx + 20 + bar_filled, ry + 66), (0, 220, 120), -1)
 
-                    # Status Text
                     status_txt = "Capturing hand pose..." if result.has_any_hand else "WAITING: Place hand in frame"
                     status_col = (0, 255, 150) if result.has_any_hand else (60, 120, 255)
                     cv2.putText(
@@ -233,7 +215,7 @@ def record_dataset(
                     if key in (27, ord("q"), ord("Q")):
                         print("\nRecording cancelled by user.")
                         break
-                    elif key == 32:  # SPACE bar
+                    elif key == 32:  # type: ignore
                         state = "PAUSED" if state == "RECORDING" else "RECORDING"
                         print(f"Recording state: {state}")
 

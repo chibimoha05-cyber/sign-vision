@@ -1,11 +1,8 @@
-"""Spatial Normalization and Adaptive Landmark Stabilization.
+"""Spatial normalization and adaptive landmark stabilization.
 
-Mathematical Guarantees:
-1. Translation Invariance: Wrist-origin centering shifts the coordinate space so P_0 = (0, 0, 0).
-2. Scale Invariance: Normalizes by max 3D Euclidean distance from the wrist, bounding all points strictly to [-1.0, 1.0].
-3. True One-Euro Filter (Casiez et al., CHI 2012): Timestamp-aware low-pass filter operating on
-   raw 3D landmarks before projection. Stabilizes both screen rendering (pixels, bounding box)
-   and normalized ML vectors without dynamic lag.
+Implements wrist-origin translation invariance, maximum-distance scale normalization,
+and the vectorized One-Euro filter (Casiez et al., CHI 2012) for per-joint adaptive
+jitter suppression without phase lag during rapid motion.
 """
 
 from __future__ import annotations
@@ -13,34 +10,30 @@ from __future__ import annotations
 from typing import Dict, Literal, Optional, Tuple
 import numpy as np
 
-# Safe epsilon to prevent division by zero in degenerate skeletons
 EPSILON: float = 1e-6
 
 
 def normalize_landmarks(landmarks: np.ndarray) -> np.ndarray:
     """Applies wrist-relative translation and maximum-distance scale normalization.
 
-    Given 21 3D points P_0, P_1, ..., P_20 where P_0 is the wrist:
-    1. Relative translation: P'_i = P_i - P_0, so P'_0 = (0, 0, 0).
-    2. Scale factor: S = max_{i in [1, 20]} ||P'_i||_2 (with safe epsilon floor).
-    3. Normalized points: P_hat_i = P'_i / S.
+    Given 21 3D points P_0 .. P_20 where P_0 is the wrist:
+        P'_i = P_i - P_0  (wrist becomes origin)
+        S    = max ||P'_i||_2 for i in [1, 20]
+        P^_i = P'_i / S
 
     Args:
-        landmarks: np.ndarray of shape (21, 3), float32/float64.
+        landmarks: Array of shape (21, 3), float32 or float64.
 
     Returns:
-        np.ndarray of shape (21, 3), dtype float32, bounded in [-1.0, 1.0].
+        Normalized array of shape (21, 3), dtype float32, bounded in [-1.0, 1.0].
     """
     if landmarks.ndim != 2 or landmarks.shape[0] != 21 or landmarks.shape[1] != 3:
         raise ValueError(f"landmarks must have shape (21, 3), got {landmarks.shape}")
 
     coords = landmarks.astype(np.float64, copy=True)
-    wrist = coords[0:1, :]  # Shape (1, 3)
+    wrist = coords[0:1, :]
+    centered = coords - wrist
 
-    # 1. Translation Invariance: Centering wrist at origin (0, 0, 0)
-    centered = coords - wrist  # wrist becomes [0.0, 0.0, 0.0]
-
-    # 2. Scale Invariance: Calculate Euclidean distance of all points from wrist
     non_wrist = centered[1:, :]
     distances = np.linalg.norm(non_wrist, axis=1)
 
@@ -48,8 +41,6 @@ def normalize_landmarks(landmarks: np.ndarray) -> np.ndarray:
     scale = max(max_dist, EPSILON)
 
     normalized = centered / scale
-
-    # Force exact 0.0 at wrist to eliminate any floating-point arithmetic residue
     normalized[0, :] = 0.0
 
     return normalized.astype(np.float32)
@@ -60,11 +51,11 @@ def compute_bounding_box(
     image_shape: Tuple[int, int],
     padding_ratio: float = 0.12,
 ) -> Tuple[int, int, int, int]:
-    """Computes a padded (x_min, y_min, x_max, y_max) bounding box clamped to image bounds.
+    """Computes a padded bounding box clamped to image bounds.
 
     Args:
-        pixel_landmarks: (21, 2) int32 pixel coordinates.
-        image_shape: (height, width) of the frame.
+        pixel_landmarks: Array of shape (21, 2) with integer pixel coordinates.
+        image_shape: (height, width) of the source frame.
         padding_ratio: Fractional padding around the landmark extent.
 
     Returns:
@@ -90,12 +81,12 @@ def compute_bounding_box(
 
 
 class OneEuroFilter:
-    """Vectorized One-Euro Filter for 3D landmarks (Casiez et al., CHI 2012).
+    """Vectorized One-Euro Filter for 3D landmark arrays (Casiez et al., CHI 2012).
 
-    Parameters:
-        min_cutoff: Minimum cutoff frequency (Hz). Lower = stronger jitter suppression when still.
-        beta: Speed coefficient. Higher = faster response / lower lag during rapid motions.
-        d_cutoff: Cutoff frequency (Hz) for velocity derivation.
+    Args:
+        min_cutoff: Minimum cutoff frequency in Hz. Lower values increase jitter suppression at rest.
+        beta: Speed coefficient. Higher values reduce lag during rapid motion.
+        d_cutoff: Cutoff frequency in Hz for the velocity derivative signal.
     """
 
     def __init__(
@@ -123,7 +114,7 @@ class OneEuroFilter:
         return 1.0 / (1.0 + tau / dt)
 
     def filter(self, x: np.ndarray, timestamp_sec: float) -> np.ndarray:
-        """Applies adaptive filtering on an input array of coordinates (e.g., 21x3).
+        """Applies adaptive filtering to an input coordinate array.
 
         Args:
             x: Input array (float32 or float64).
@@ -143,17 +134,14 @@ class OneEuroFilter:
 
         dt = t - self.t_prev
 
-        # 1. Estimate and filter the velocity derivative
         dx = (current_x - self.x_prev) / dt
         alpha_d = self._alpha(dt, self.d_cutoff)
         dx_hat = alpha_d * dx + (1.0 - alpha_d) * self.dx_prev
 
-        # 2. Compute dynamic cutoff based on Euclidean speed per landmark
         speed = np.linalg.norm(dx_hat, axis=-1, keepdims=True)
         cutoff = self.min_cutoff + self.beta * speed
         alpha = self._alpha(dt, cutoff)
 
-        # 3. Filter the signal with the dynamic cutoff
         x_hat = alpha * current_x + (1.0 - alpha) * self.x_prev
 
         self.x_prev = x_hat
@@ -164,11 +152,10 @@ class OneEuroFilter:
 
 
 class HandStabilizer:
-    """Production Multi-Hand Stabilizer supporting One-Euro and Adaptive EMA filtering.
+    """Multi-hand landmark stabilizer supporting One-Euro and adaptive EMA filtering.
 
-    Provides smoothing at the source on raw (21, 3) landmarks so that:
-    1. UI display skeleton (pixel_landmarks, bounding_box) is stabilized without jitter.
-    2. Normalized feature vectors (normalized_landmarks) are rock-solid for ML inference.
+    Applies smoothing to raw (21, 3) landmark coordinates so that both the visual
+    skeleton and the normalized feature vectors are stable for real-time use.
     """
 
     def __init__(
@@ -189,25 +176,21 @@ class HandStabilizer:
         self.d_cutoff = d_cutoff
         self.max_missing_frames = int(max_missing_frames)
 
-        # Legacy EMA parameters (kept for backward compatibility)
         self.alpha_slow = float(alpha_slow)
         self.alpha_fast = float(alpha_fast)
         self.v_low = float(v_low)
         self.v_high = float(v_high)
 
-        # Raw image-space filters per hand (strictly independent per joint)
         self._one_euro_filters: Dict[str, OneEuroFilter] = {
             "Left": self._make_filter(),
             "Right": self._make_filter(),
         }
 
-        # World metric 3D filters per hand
         self._world_filters: Dict[str, OneEuroFilter] = {
             "Left": self._make_world_filter(),
             "Right": self._make_world_filter(),
         }
 
-        # Legacy EMA history
         self._history: Dict[str, np.ndarray] = {}
         self._missing_count: Dict[str, int] = {"Left": 0, "Right": 0}
 
@@ -257,7 +240,7 @@ class HandStabilizer:
         handedness: Literal["Left", "Right"],
         timestamp_sec: float,
     ) -> np.ndarray:
-        """Smooths raw image-space landmarks (21, 3) at timestamp_sec with per-joint independence."""
+        """Smooths raw image-space landmarks (21, 3) with per-joint independence."""
         self._missing_count[handedness] = 0
 
         if self.mode == "unfiltered":
@@ -276,7 +259,7 @@ class HandStabilizer:
         handedness: Literal["Left", "Right"],
         timestamp_sec: float,
     ) -> np.ndarray:
-        """Smooths metric 3D Cartesian world landmarks (21, 3) independently per joint."""
+        """Smooths metric 3D world landmarks (21, 3) independently per joint."""
         if self.mode == "unfiltered":
             return world_landmarks.astype(np.float32, copy=True)
 
@@ -293,7 +276,7 @@ class HandStabilizer:
         handedness: Literal["Left", "Right"],
         timestamp_sec: Optional[float] = None,
     ) -> np.ndarray:
-        """Applies stabilization to normalized landmarks (backward compatible interface)."""
+        """Applies stabilization to normalized landmarks. Backward compatible interface."""
         self._missing_count[handedness] = 0
         current = landmarks.astype(np.float32, copy=True)
 
@@ -306,10 +289,9 @@ class HandStabilizer:
                 filt = self._make_filter()
                 self._one_euro_filters[handedness] = filt
             smoothed = filt.filter(current, timestamp_sec)
-            smoothed[0, :] = 0.0  # Anchor wrist origin
+            smoothed[0, :] = 0.0
             return smoothed
 
-        # Fallback to adaptive EMA when no timestamp is passed
         prev = self._history.get(handedness)
         if prev is None:
             self._history[handedness] = current.copy()

@@ -1,10 +1,8 @@
-"""Data contracts defining strict schemas for the Sign Language Translation Pipeline.
+"""Data contracts and schema definitions for the sign language tracking pipeline.
 
-These contracts provide deterministic, strongly-typed data structures for:
-- Team Member 2: Machine Learning Trainer & Classifier
-- Team Member 3: Dataset Collection & Curation
-- Team Member 4: Translation Engine / NLP / Gesture State Machine
-- Team Member 5: User Interface & Visual Feedback HUD
+Provides strongly-typed dataclasses and pure functions that define the canonical
+144-dimensional feature vector structure, single-hand data containers, and the
+frame-level result emitted by the tracking engine on every processed frame.
 """
 
 from __future__ import annotations
@@ -13,38 +11,37 @@ from dataclasses import dataclass
 from typing import Literal, Optional, Tuple
 import numpy as np
 
-# Landmark count for MediaPipe hands
 LANDMARK_COUNT = 21
 COORDINATES_PER_LANDMARK = 3
-HAND_COORDINATE_DIM = LANDMARK_COUNT * COORDINATES_PER_LANDMARK  # 63
+HAND_COORDINATE_DIM = LANDMARK_COUNT * COORDINATES_PER_LANDMARK
 FINGER_COUNT = 5
-HAND_FEATURE_DIM = HAND_COORDINATE_DIM + FINGER_COUNT  # 68 (63 coords + 5 curl ratios)
-GLOBAL_KINEMATIC_DIM = 6  # 3 splay angles + 3 key pinch distances
+HAND_FEATURE_DIM = HAND_COORDINATE_DIM + FINGER_COUNT
+GLOBAL_KINEMATIC_DIM = 6
 
-FEATURE_DIM_V1 = 128  # Legacy Phase 1 contract (2 + 63 + 63)
-FEATURE_DIM_V2 = 144  # Phase 2.0 Biomechanical contract (2 + 68 + 68 + 6)
-TOTAL_FEATURE_DIM = FEATURE_DIM_V2  # 144
+FEATURE_DIM_V1 = 128
+FEATURE_DIM_V2 = 144
+TOTAL_FEATURE_DIM = FEATURE_DIM_V2
 
 
 @dataclass(slots=True)
 class SingleHandData:
-    """Detailed tracking, metric world landmarks, and biomechanical features for a detected hand."""
+    """Tracking result, metric world landmarks, and biomechanical features for one hand."""
 
     handedness: Literal["Left", "Right"]
     confidence: float
-    raw_landmarks: np.ndarray  # shape (21, 3), float32 (normalized image coordinates [0, 1])
-    pixel_landmarks: np.ndarray  # shape (21, 2), int32 (pixel coordinates [px_x, px_y])
-    normalized_landmarks: np.ndarray  # shape (21, 3), float32 (wrist-centered, scale-invariant [-1, 1])
-    bounding_box: Tuple[int, int, int, int]  # (x_min, y_min, x_max, y_max) in pixel coordinates
-    world_landmarks: Optional[np.ndarray] = None  # shape (21, 3), float32 (metric 3D Cartesian in meters)
-    finger_curls: Optional[np.ndarray] = None  # shape (5,), float32 in [0.0, 1.0] [Thumb, Index, Mid, Ring, Pinky]
-    finger_splays: Optional[np.ndarray] = None  # shape (4,), float32 in radians [T-I, I-M, M-R, R-P]
-    pinch_distances: Optional[np.ndarray] = None  # shape (4,), float32 normalized [T-I, T-M, T-R, T-P]
-    is_coasting: bool = False  # True when bridging a 1-3 frame detection dropout
-    binary_mask: int = 0  # 5-bit finger mask (0..31: Thumb=16, Index=8, Mid=4, Ring=2, Pinky=1)
-    tilt_angle_deg: float = 0.0  # Palm tilt angle in degrees (-180..180, 0=upright, +90=right, -90=left)
-    confirmed_gesture: str = "none"  # Temporal debounced gesture name
-    gesture_state: str = "IDLE"  # State machine status (IDLE, CANDIDATE, CONFIRMED, ACTIVE, RELEASING)
+    raw_landmarks: np.ndarray
+    pixel_landmarks: np.ndarray
+    normalized_landmarks: np.ndarray
+    bounding_box: Tuple[int, int, int, int]
+    world_landmarks: Optional[np.ndarray] = None
+    finger_curls: Optional[np.ndarray] = None
+    finger_splays: Optional[np.ndarray] = None
+    pinch_distances: Optional[np.ndarray] = None
+    is_coasting: bool = False
+    binary_mask: int = 0
+    tilt_angle_deg: float = 0.0
+    confirmed_gesture: str = "none"
+    gesture_state: str = "IDLE"
 
     def __post_init__(self) -> None:
         if self.raw_landmarks.shape != (LANDMARK_COUNT, 3):
@@ -54,7 +51,6 @@ class SingleHandData:
         if self.normalized_landmarks.shape != (LANDMARK_COUNT, 3):
             raise ValueError(f"normalized_landmarks shape must be ({LANDMARK_COUNT}, 3), got {self.normalized_landmarks.shape}")
 
-        # Set deterministic defaults if optional kinematic fields are omitted
         if self.world_landmarks is None:
             object.__setattr__(self, "world_landmarks", np.zeros((LANDMARK_COUNT, 3), dtype=np.float32))
         elif self.world_landmarks.shape != (LANDMARK_COUNT, 3):
@@ -80,7 +76,7 @@ def build_feature_vector_v1(
     left_hand: Optional[SingleHandData],
     right_hand: Optional[SingleHandData],
 ) -> np.ndarray:
-    """Constructs the legacy 128-float feature vector (Phase 1)."""
+    """Constructs the legacy 128-float feature vector (v1 compatibility)."""
     feature_vec = np.zeros(FEATURE_DIM_V1, dtype=np.float32)
     feature_vec[0] = 1.0 if left_hand is not None else 0.0
     feature_vec[1] = 1.0 if right_hand is not None else 0.0
@@ -98,56 +94,43 @@ def build_feature_vector(
     left_hand: Optional[SingleHandData],
     right_hand: Optional[SingleHandData],
 ) -> np.ndarray:
-    """Constructs the canonical 144-float biomechanical feature vector (Phase 2.0).
+    """Constructs the canonical 144-float biomechanical feature vector.
 
-    Structure:
-    - Indices 0..1: [has_left, has_right] (2 values)
-    - Left Hand (68 values):
-      - Indices 2..64: Flattened normalized landmarks (21 x 3 = 63 values)
-      - Indices 65..69: Finger curl ratios [Thumb, Index, Mid, Ring, Pinky] (5 values)
-    - Right Hand (68 values):
-      - Indices 70..132: Flattened normalized landmarks (21 x 3 = 63 values)
-      - Indices 133..137: Finger curl ratios [Thumb, Index, Mid, Ring, Pinky] (5 values)
-    - Global Kinematics (6 values):
-      - Indices 138..140: 3 inter-finger splay angles [Index-Mid, Mid-Ring, Ring-Pinky]
-      - Indices 141..143: 3 key pinch distances [Thumb-Index, Thumb-Mid, Thumb-Pinky]
+    Layout:
+        [0..1]      2 values  — Hand presence flags (has_left, has_right)
+        [2..64]    63 values  — Left hand normalized 3D coordinates (21 × 3)
+        [65..69]    5 values  — Left hand finger curl ratios
+        [70..132]  63 values  — Right hand normalized 3D coordinates (21 × 3)
+        [133..137]  5 values  — Right hand finger curl ratios
+        [138..140]  3 values  — Inter-finger splay angles (radians)
+        [141..143]  3 values  — Key pinch distances (normalized)
 
-    Total length: exactly 144 float32 values with 0.0 padding for absent hands.
+    Missing hands are deterministically zero-padded. Total length: 144.
     """
     feature_vec = np.zeros(TOTAL_FEATURE_DIM, dtype=np.float32)
 
-    has_left = 1.0 if left_hand is not None else 0.0
-    has_right = 1.0 if right_hand is not None else 0.0
-
-    feature_vec[0] = has_left
-    feature_vec[1] = has_right
+    feature_vec[0] = 1.0 if left_hand is not None else 0.0
+    feature_vec[1] = 1.0 if right_hand is not None else 0.0
 
     if left_hand is not None:
-        # 63 normalized coordinates
         feature_vec[2:65] = left_hand.normalized_landmarks.astype(np.float32, copy=False).reshape(-1)
-        # 5 finger curl ratios
         if left_hand.finger_curls is not None:
             feature_vec[65:70] = left_hand.finger_curls.astype(np.float32, copy=False)
 
     if right_hand is not None:
-        # 63 normalized coordinates
         feature_vec[70:133] = right_hand.normalized_landmarks.astype(np.float32, copy=False).reshape(-1)
-        # 5 finger curl ratios
         if right_hand.finger_curls is not None:
             feature_vec[133:138] = right_hand.finger_curls.astype(np.float32, copy=False)
 
-    # Active hand kinematic descriptors (prioritize right hand, else left)
     active_hand = right_hand if right_hand is not None else left_hand
     if active_hand is not None:
         if active_hand.finger_splays is not None and len(active_hand.finger_splays) >= 4:
-            # 3 inter-finger splays: Index-Mid, Mid-Ring, Ring-Pinky
             feature_vec[138:141] = active_hand.finger_splays[1:4]
 
         if active_hand.pinch_distances is not None and len(active_hand.pinch_distances) >= 4:
-            # 3 key pinch distances: Thumb-Index, Thumb-Mid, Thumb-Pinky
-            feature_vec[141] = active_hand.pinch_distances[0]  # T-I
-            feature_vec[142] = active_hand.pinch_distances[1]  # T-M
-            feature_vec[143] = active_hand.pinch_distances[3]  # T-P
+            feature_vec[141] = active_hand.pinch_distances[0]
+            feature_vec[142] = active_hand.pinch_distances[1]
+            feature_vec[143] = active_hand.pinch_distances[3]
 
     return feature_vec
 
@@ -161,8 +144,8 @@ class FrameTrackingResult:
     inference_latency_ms: float
     left_hand: Optional[SingleHandData]
     right_hand: Optional[SingleHandData]
-    presence_mask: Tuple[int, int]  # (has_left, has_right) as (0|1, 0|1)
-    feature_vector: np.ndarray  # shape (144,), float32
+    presence_mask: Tuple[int, int]
+    feature_vector: np.ndarray
     active_left_gesture: str = "none"
     active_right_gesture: str = "none"
 
@@ -181,4 +164,3 @@ class FrameTrackingResult:
     def has_both_hands(self) -> bool:
         """True if both hands are detected."""
         return self.left_hand is not None and self.right_hand is not None
-

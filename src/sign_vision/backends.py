@@ -1,11 +1,9 @@
-"""RTMPose SimCC Hand Tracking Backend using OpenMMLab rtmlib + ONNXRuntime.
+"""RTMPose SimCC hand tracking backend via OpenMMLab rtmlib and ONNXRuntime.
 
-Key Architectural Guarantees:
-1. SimCC (Simulated Coordinate Classification): Uses 1D coordinate classification heatmaps
-   for each of the 21 hand joints independently, eliminating inter-finger regression crosstalk.
-2. Two-Stage Decoupled Pipeline: Dedicated RTMDet-Nano-Hand detector pairs with RTMPose-M.
-3. Contract Compliance: Outputs canonical 21-landmark topologies matching MediaPipe schemas
-   so downstream kinematics, 1€ filtering, and 144-float feature vector contracts work identically.
+Provides a two-stage decoupled detection pipeline (RTMDet-Nano palm detector paired
+with RTMPose-M keypoint estimator) that emits 21-landmark hand topologies matching
+the MediaPipe schema, ensuring full compatibility with downstream kinematics and
+feature vector contracts.
 """
 
 from __future__ import annotations
@@ -16,7 +14,6 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Topological joint indices
 WRIST = 0
 INDEX_MCP = 5
 PINKY_MCP = 17
@@ -69,11 +66,7 @@ class RTMPoseBackend:
 
     @staticmethod
     def _estimate_handedness(kpts_norm: np.ndarray) -> str:
-        """Estimates hand side (Left vs Right) using palm vector cross product and screen position.
-
-        Cross product of (Wrist -> Index_MCP) x (Wrist -> Pinky_MCP):
-        In standard selfie view, Right hand has Index to the left of Pinky, yielding positive cross-product.
-        """
+        """Estimates hand side using the palm vector cross product and screen position."""
         wrist = kpts_norm[WRIST, :2]
         index_mcp = kpts_norm[INDEX_MCP, :2]
         pinky_mcp = kpts_norm[PINKY_MCP, :2]
@@ -81,10 +74,7 @@ class RTMPoseBackend:
         v_idx = index_mcp - wrist
         v_pnk = pinky_mcp - wrist
 
-        # 2D cross product: v_idx.x * v_pnk.y - v_idx.y * v_pnk.x
         cross = float(v_idx[0] * v_pnk[1] - v_idx[1] * v_pnk[0])
-
-        # Also consider spatial position (Left hand typically appears on left half of selfie screen)
         palm_center_x = float(wrist[0] + index_mcp[0] + pinky_mcp[0]) / 3.0
 
         if cross > 0.002:
@@ -102,17 +92,12 @@ class RTMPoseBackend:
         """Processes an image frame and returns detected hands with landmarks.
 
         Args:
-            frame_bgr: Full BGR frame (H, W, 3).
-            timestamp_ms: Monotonic timestamp.
+            frame_bgr: Full BGR frame of shape (H, W, 3).
+            timestamp_ms: Monotonic timestamp in milliseconds.
 
         Returns:
-            List of detection dicts:
-            [{
-                "handedness": "Left" | "Right",
-                "confidence": float,
-                "landmarks": np.ndarray (21, 3) in [0, 1] normalized space,
-                "world_landmarks": np.ndarray (21, 3) in meters,
-            }]
+            List of dicts, each containing 'handedness', 'confidence',
+            'landmarks' (21, 3), and 'world_landmarks' (21, 3).
         """
         if not self.is_available:
             return []
@@ -130,23 +115,18 @@ class RTMPoseBackend:
         results: List[Dict[str, Any]] = []
 
         for hand_idx in range(len(keypoints)):
-            kpts = keypoints[hand_idx]  # shape (21, 2) in pixels
+            kpts = keypoints[hand_idx]
             scrs = scores[hand_idx] if scores is not None and hand_idx < len(scores) else None
 
             mean_score = float(np.mean(scrs)) if scrs is not None else 0.50
             if mean_score < self.min_score:
                 continue
 
-            # Convert to normalized 3D coordinates [0, 1]
             norm_landmarks = np.zeros((21, 3), dtype=np.float32)
             norm_landmarks[:, 0] = np.clip(kpts[:, 0] / max(w, 1), 0.0, 1.0)
             norm_landmarks[:, 1] = np.clip(kpts[:, 1] / max(h, 1), 0.0, 1.0)
+            norm_landmarks[:, 2] = 0.0
 
-            # Synthesize approximate relative depth from bone scale
-            palm_dist = float(np.linalg.norm(norm_landmarks[9, :2] - norm_landmarks[0, :2]))
-            norm_landmarks[:, 2] = 0.0  # Planar baseline
-
-            # World metric coordinates in meters
             world_landmarks = np.zeros((21, 3), dtype=np.float32)
             world_landmarks[:, :2] = (norm_landmarks[:, :2] - norm_landmarks[0:1, :2]) * 0.20
             world_landmarks[:, 2] = 0.0
